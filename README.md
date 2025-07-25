@@ -5,9 +5,9 @@ A TypeScript client library for the Basestamp API with trustless Merkle proof ve
 ## Installation
 
 ```bash
-npm install basestamp
+npm install @basestamp/basestamp
 # or
-yarn add basestamp
+yarn add @basestamp/basestamp
 ```
 
 ## Quick Start
