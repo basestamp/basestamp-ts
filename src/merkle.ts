@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { MerkleProof } from './types';
+import { MerkleProofData } from './types';
 
 function hashPair(left: string, right: string): string {
   const leftBytes = Buffer.from(left, 'hex');
@@ -21,7 +21,7 @@ function hashPair(left: string, right: string): string {
   return createHash('sha256').update(combined).digest('hex');
 }
 
-export function verifyMerkleProof(proof: MerkleProof): boolean {
+export function verifyMerkleProof(proof: MerkleProofData): boolean {
   if (!proof) {
     return false;
   }

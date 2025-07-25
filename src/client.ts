@@ -8,9 +8,10 @@ import {
   HealthResponse,
   BasestampError,
   ClientOptions,
-  MerkleProof
+  MerkleProof,
+  MerkleProofData
 } from './types';
-import { verifyMerkleProof } from './merkle';
+import { verifyMerkleProof, calculateSHA256 } from './merkle';
 
 export class BasestampClient {
   private baseURL: string;
@@ -33,15 +34,62 @@ export class BasestampClient {
     return response;
   }
 
-  async verifyStamp(stampId: string): Promise<boolean> {
-    try {
-      const stampData = await this.getStamp(stampId);
-      
-      if (!stampData.merkle_proof) {
-        throw new BasestampError('Merkle proof not yet available');
+  async get_merkle_proof(stampId: string, wait: boolean = false, timeout: number = 30): Promise<MerkleProof> {
+    let attempts = 0;
+    const maxAttempts = wait ? Math.ceil(timeout) : 1;
+    const delayMs = 1000; // 1 second between attempts
+
+    while (attempts < maxAttempts) {
+      try {
+        const stampData = await this.getStamp(stampId);
+        
+        if (!stampData.merkle_proof) {
+          if (!wait || attempts === maxAttempts - 1) {
+            throw new BasestampError('Merkle proof not yet available');
+          }
+          // Wait before retrying
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+          attempts++;
+          continue;
+        }
+        
+        // Handle both new nonce-based format and legacy format
+        if (stampData.nonce) {
+          // New nonce-based verification format (nonce is at top level, use hash as original_hash)
+          return new MerkleProof({
+            ...stampData.merkle_proof,
+            nonce: stampData.nonce,
+            original_hash: stampData.hash // Use hash field as original_hash
+          }, verifyMerkleProof, calculateSHA256);
+        } else {
+          // Legacy format - use hash as both nonce and original_hash for backward compatibility
+          console.warn('Server response missing nonce field. Using legacy compatibility mode.');
+          return new MerkleProof({
+            ...stampData.merkle_proof,
+            nonce: '', // Empty nonce for legacy mode
+            original_hash: stampData.hash // Use the hash field as original_hash
+          }, verifyMerkleProof, calculateSHA256);
+        }
+      } catch (error) {
+        if (error instanceof BasestampError) {
+          throw error;
+        }
+        throw new BasestampError(`Failed to get merkle proof: ${error}`);
       }
+    }
+    
+    throw new BasestampError(`Timeout waiting for merkle proof after ${timeout} seconds`);
+  }
+
+  async verifyStamp(stampId: string, hashValue?: string): Promise<boolean> {
+    try {
+      // Use the new pattern: get_merkle_proof and then verify
+      const proof = await this.get_merkle_proof(stampId);
       
-      return verifyMerkleProof(stampData.merkle_proof);
+      // If no hash value provided, use the original_hash from the proof
+      const hashToVerify = hashValue || proof.original_hash;
+      
+      return proof.verify(hashToVerify);
     } catch (error) {
       if (error instanceof BasestampError) {
         throw error;

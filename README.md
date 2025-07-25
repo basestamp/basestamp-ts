@@ -5,9 +5,9 @@ A TypeScript client library for the Basestamp API with trustless Merkle proof ve
 ## Installation
 
 ```bash
-npm install basestamp-client
+npm install basestamp
 # or
-yarn add basestamp-client
+yarn add basestamp
 ```
 
 ## Quick Start
@@ -28,11 +28,11 @@ const hash = calculateSHA256(data);
 const timestamp = await client.timestamp(hash);
 console.log('Timestamp created:', timestamp);
 
-// Wait for the proof to be generated (usually takes a few seconds)
-await new Promise(resolve => setTimeout(resolve, 5000));
+// Get the Merkle proof (with optional waiting)
+const proof = await client.get_merkle_proof(timestamp.stamp_id, true, 30);
 
 // Verify the timestamp with trustless verification
-const isValid = await client.verifyStamp(timestamp.stamp_id);
+const isValid = proof.verify(hash);
 console.log('Timestamp is valid:', isValid);
 ```
 
@@ -70,12 +70,26 @@ Retrieves detailed information about a stamp, including its Merkle proof if avai
 
 **Returns:** Promise resolving to StampData with full stamp details
 
-##### `verifyStamp(stampId: string): Promise<boolean>`
+##### `get_merkle_proof(stampId: string, wait?: boolean, timeout?: number): Promise<MerkleProof>`
 
-Performs trustless client-side verification of a stamp's Merkle proof.
+Retrieves a Merkle proof for a stamp with optional waiting functionality.
 
 **Parameters:**
 - `stampId` - The unique identifier for the stamp
+- `wait` - Whether to wait for the proof if not immediately available (default: false)
+- `timeout` - Maximum time to wait in seconds (default: 30)
+
+**Returns:** Promise resolving to a MerkleProof instance
+
+**Throws:** `BasestampError` if the proof is not available or times out
+
+##### `verifyStamp(stampId: string, hashValue?: string): Promise<boolean>`
+
+Performs trustless client-side verification of a stamp's Merkle proof using the new pattern.
+
+**Parameters:**
+- `stampId` - The unique identifier for the stamp
+- `hashValue` - Optional hash value to verify against (uses original_hash if not provided)
 
 **Returns:** Promise resolving to `true` if the proof is valid, `false` otherwise
 
@@ -98,6 +112,23 @@ Checks the health status of the Basestamp server.
 Gets statistics about the batching process.
 
 **Returns:** Promise resolving to BatchStats
+
+### MerkleProof Class
+
+#### `verify(hash_value: string): boolean`
+
+Verifies that the provided hash value matches the Merkle proof.
+
+**Parameters:**
+- `hash_value` - The original hash value to verify
+
+**Returns:** `true` if the proof is valid for the given hash, `false` otherwise
+
+**Example:**
+```typescript
+const proof = await client.get_merkle_proof(stampId);
+const isValid = proof.verify(originalHash);
+```
 
 ### Utility Functions
 
@@ -139,6 +170,8 @@ interface CalendarResponse {
 interface StampData {
   stamp_id: string;
   hash: string;
+  original_hash: string;
+  nonce: string;
   timestamp: string;
   status: string;
   message?: string;
@@ -153,12 +186,16 @@ interface StampData {
 ### MerkleProof
 
 ```typescript
-interface MerkleProof {
+class MerkleProof {
   leaf_hash: string;
   leaf_index: number;
   siblings: string[];
   directions: boolean[];
   root_hash: string;
+  nonce: string;
+  original_hash: string;
+  
+  verify(hash_value: string): boolean;
 }
 ```
 
@@ -184,10 +221,14 @@ try {
 
 This client performs complete client-side verification of Merkle proofs, meaning you don't need to trust the Basestamp server. The verification process:
 
-1. Retrieves the stamp data including the Merkle proof
-2. Uses the proof to reconstruct the path from the leaf (your hash) to the Merkle root
-3. Verifies that the computed root matches the expected root hash
-4. The root hash is anchored on the blockchain, providing cryptographic proof of inclusion
+1. Retrieves the stamp data including the Merkle proof, nonce, and original hash
+2. Calculates the expected leaf hash using `SHA256(nonce + original_hash)`
+3. Verifies the calculated leaf hash matches the proof's leaf hash
+4. Uses the proof to reconstruct the path from the leaf to the Merkle root
+5. Verifies that the computed root matches the expected root hash
+6. The root hash is anchored on the blockchain, providing cryptographic proof of inclusion
+
+The nonce-based approach prevents blockchain collision attacks while maintaining trustless verification.
 
 ## Examples
 
@@ -207,9 +248,16 @@ const fileHash = calculateSHA256(fileContent);
 const timestamp = await client.timestamp(fileHash);
 console.log(`File timestamped with ID: ${timestamp.stamp_id}`);
 
-// Later, verify the timestamp
-const isValid = await client.verifyStamp(timestamp.stamp_id);
+// Get the Merkle proof (wait up to 30 seconds if needed)
+const proof = await client.get_merkle_proof(timestamp.stamp_id, true, 30);
+
+// Verify the timestamp
+const isValid = proof.verify(fileHash);
 console.log(`Timestamp verification: ${isValid ? 'VALID' : 'INVALID'}`);
+
+// Alternative: Use the verifyStamp method (uses new pattern internally)
+const isValidAlt = await client.verifyStamp(timestamp.stamp_id, fileHash);
+console.log(`Alternative verification: ${isValidAlt ? 'VALID' : 'INVALID'}`);
 ```
 
 ### Batch Processing
