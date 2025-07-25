@@ -1,5 +1,5 @@
 {
-  "name": "basestamp-client",
+  "name": "basestamp",
   "version": "1.0.0",
   "description": "TypeScript client library for Basestamp API with trustless Merkle proof verification",
   "main": "dist/index.js",
