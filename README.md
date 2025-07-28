@@ -13,7 +13,7 @@ yarn add @basestamp/basestamp
 ## Quick Start
 
 ```typescript
-import { BasestampClient, calculateSHA256 } from 'basestamp-client';
+import { BasestampClient, calculateSHA256 } from '@basestamp/basestamp';
 
 // Initialize the client
 const client = new BasestampClient({
@@ -24,15 +24,15 @@ const client = new BasestampClient({
 const data = 'Hello, Basestamp!';
 const hash = calculateSHA256(data);
 
-// Create a timestamp
-const timestamp = await client.timestamp(hash);
-console.log('Timestamp created:', timestamp);
+// Submit SHA256 hash for timestamping
+const stampId = await client.submitSHA256(hash);
+console.log('Stamp ID:', stampId);
 
-// Get the Merkle proof (with optional waiting)
-const proof = await client.get_merkle_proof(timestamp.stamp_id, true, 30);
+// Get the stamp (with optional waiting for Merkle proof)
+const stamp = await client.getStamp(stampId, { wait: true, timeout: 30 });
 
 // Verify the timestamp with trustless verification
-const isValid = proof.verify(hash);
+const isValid = stamp.verify(hash); // throws descriptive errors if invalid
 console.log('Timestamp is valid:', isValid);
 ```
 
@@ -52,48 +52,27 @@ new BasestampClient(options?: ClientOptions)
 
 #### Methods
 
-##### `timestamp(hash: string): Promise<CalendarResponse>`
+##### `submitSHA256(hash: string): Promise<string>`
 
-Creates a new timestamp for the given SHA256 hash.
+Submits a SHA256 hash for timestamping.
 
 **Parameters:**
 - `hash` - A SHA256 hash as a hex string
 
-**Returns:** Promise resolving to a CalendarResponse with timestamp details
+**Returns:** Promise resolving to a stamp ID string
 
-##### `getStamp(stampId: string): Promise<StampData>`
+##### `getStamp(stampId: string, options?: StampOptions): Promise<Stamp>`
 
-Retrieves detailed information about a stamp, including its Merkle proof if available.
-
-**Parameters:**
-- `stampId` - The unique identifier for the stamp
-
-**Returns:** Promise resolving to StampData with full stamp details
-
-##### `get_merkle_proof(stampId: string, wait?: boolean, timeout?: number): Promise<MerkleProof>`
-
-Retrieves a Merkle proof for a stamp with optional waiting functionality.
+Retrieves a stamp object with its Merkle proof.
 
 **Parameters:**
 - `stampId` - The unique identifier for the stamp
-- `wait` - Whether to wait for the proof if not immediately available (default: false)
-- `timeout` - Maximum time to wait in seconds (default: 30)
+- `options.wait` - Whether to wait for the proof if not immediately available (default: false)
+- `options.timeout` - Maximum time to wait in seconds (default: 30)
 
-**Returns:** Promise resolving to a MerkleProof instance
+**Returns:** Promise resolving to a Stamp object
 
 **Throws:** `BasestampError` if the proof is not available or times out
-
-##### `verifyStamp(stampId: string, hashValue?: string): Promise<boolean>`
-
-Performs trustless client-side verification of a stamp's Merkle proof using the new pattern.
-
-**Parameters:**
-- `stampId` - The unique identifier for the stamp
-- `hashValue` - Optional hash value to verify against (uses original_hash if not provided)
-
-**Returns:** Promise resolving to `true` if the proof is valid, `false` otherwise
-
-**Throws:** `BasestampError` if the Merkle proof is not yet available
 
 ##### `info(): Promise<ServerInfo>`
 
@@ -113,22 +92,50 @@ Gets statistics about the batching process.
 
 **Returns:** Promise resolving to BatchStats
 
-### MerkleProof Class
+### Stamp Class
 
-#### `verify(hash_value: string): boolean`
+#### `verify(original_hash: string): boolean`
 
-Verifies that the provided hash value matches the Merkle proof.
+Verifies that the provided hash matches the stamp's Merkle proof. This is 100% local verification with no network calls.
 
 **Parameters:**
-- `hash_value` - The original hash value to verify
+- `original_hash` - The original hash value to verify
 
-**Returns:** `true` if the proof is valid for the given hash, `false` otherwise
+**Returns:** `true` if the proof is valid
+
+**Throws:** Descriptive `BasestampError` explaining why verification failed:
+- Hash mismatch errors
+- Leaf hash verification failures  
+- Merkle proof structure errors
 
 **Example:**
 ```typescript
-const proof = await client.get_merkle_proof(stampId);
-const isValid = proof.verify(originalHash);
+const stamp = await client.getStamp(stampId);
+try {
+  const isValid = stamp.verify(originalHash);
+  console.log('Verification successful!');
+} catch (error) {
+  console.log('Verification failed:', error.message);
+}
 ```
+
+#### `getMerkleProof(): MerkleProof`
+
+Gets the underlying MerkleProof object for advanced use cases.
+
+**Returns:** MerkleProof instance
+
+**Throws:** `BasestampError` if no Merkle proof is available
+
+### Deprecated Methods (for backward compatibility)
+
+##### `get_merkle_proof(stampId: string, wait?: boolean, timeout?: number): Promise<MerkleProof>`
+
+**Deprecated:** Use `getStamp()` and call `stamp.getMerkleProof()` instead.
+
+##### `verifyStamp(stampId: string, hashValue?: string): Promise<boolean>`
+
+**Deprecated:** Use `getStamp()` and call `stamp.verify()` instead.
 
 ### Utility Functions
 
@@ -141,33 +148,30 @@ Calculates the SHA256 hash of the given data.
 
 **Returns:** SHA256 hash as a hex string
 
-#### `verifyMerkleProof(proof: MerkleProof): boolean`
+#### `verifyMerkleProof(proof: MerkleProofData): boolean`
 
-Verifies a Merkle proof client-side (used internally by `verifyStamp`).
+Verifies a Merkle proof client-side (used internally).
 
 **Parameters:**
-- `proof` - A MerkleProof object
+- `proof` - A MerkleProofData object
 
 **Returns:** `true` if the proof is valid, `false` otherwise
 
 ## Types
 
-### CalendarResponse
+### StampOptions
 
 ```typescript
-interface CalendarResponse {
-  hash: string;
-  timestamp: string;
-  tx_id?: string;
-  status: string;
-  message?: string;
+interface StampOptions {
+  wait?: boolean;
+  timeout?: number;
 }
 ```
 
-### StampData
+### Stamp
 
 ```typescript
-interface StampData {
+class Stamp {
   stamp_id: string;
   hash: string;
   original_hash: string;
@@ -179,7 +183,9 @@ interface StampData {
   block_hash?: string;
   network?: string;
   chain_id?: string;
-  merkle_proof?: MerkleProof;
+  
+  verify(original_hash: string): boolean;
+  getMerkleProof(): MerkleProof;
 }
 ```
 
@@ -201,16 +207,21 @@ class MerkleProof {
 
 ## Error Handling
 
-The client throws `BasestampError` for various error conditions:
+The client throws `BasestampError` with descriptive messages:
 
 ```typescript
-import { BasestampError } from 'basestamp-client';
+import { BasestampError } from '@basestamp/basestamp';
 
 try {
-  const result = await client.verifyStamp('invalid-stamp-id');
+  const stamp = await client.getStamp(stampId);
+  stamp.verify(hash);
 } catch (error) {
   if (error instanceof BasestampError) {
     console.log('Basestamp error:', error.message);
+    // Examples:
+    // "Hash mismatch: provided hash 'abc123' does not match stamp's original hash 'def456'"
+    // "Leaf hash verification failed: expected 'xyz789' but merkle proof contains 'abc123'"
+    // "Merkle proof verification failed: the proof structure does not produce the expected root hash"
   } else {
     console.log('Other error:', error);
   }
@@ -235,7 +246,7 @@ The nonce-based approach prevents blockchain collision attacks while maintaining
 ### File Timestamping
 
 ```typescript
-import { BasestampClient, calculateSHA256 } from 'basestamp-client';
+import { BasestampClient, calculateSHA256 } from '@basestamp/basestamp';
 import { readFileSync } from 'fs';
 
 const client = new BasestampClient();
@@ -244,20 +255,20 @@ const client = new BasestampClient();
 const fileContent = readFileSync('document.pdf');
 const fileHash = calculateSHA256(fileContent);
 
-// Create timestamp
-const timestamp = await client.timestamp(fileHash);
-console.log(`File timestamped with ID: ${timestamp.stamp_id}`);
+// Submit for timestamping
+const stampId = await client.submitSHA256(fileHash);
+console.log(`File timestamped with ID: ${stampId}`);
 
-// Get the Merkle proof (wait up to 30 seconds if needed)
-const proof = await client.get_merkle_proof(timestamp.stamp_id, true, 30);
+// Get the stamp (wait up to 30 seconds if needed)
+const stamp = await client.getStamp(stampId, { wait: true, timeout: 30 });
 
 // Verify the timestamp
-const isValid = proof.verify(fileHash);
-console.log(`Timestamp verification: ${isValid ? 'VALID' : 'INVALID'}`);
-
-// Alternative: Use the verifyStamp method (uses new pattern internally)
-const isValidAlt = await client.verifyStamp(timestamp.stamp_id, fileHash);
-console.log(`Alternative verification: ${isValidAlt ? 'VALID' : 'INVALID'}`);
+try {
+  stamp.verify(fileHash);
+  console.log('Timestamp verification: VALID');
+} catch (error) {
+  console.log('Timestamp verification: INVALID -', error.message);
+}
 ```
 
 ### Batch Processing

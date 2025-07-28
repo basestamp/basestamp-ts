@@ -9,7 +9,9 @@ import {
   BasestampError,
   ClientOptions,
   MerkleProof,
-  MerkleProofData
+  MerkleProofData,
+  Stamp,
+  StampOptions
 } from './types';
 import { verifyMerkleProof, calculateSHA256 } from './merkle';
 
@@ -22,26 +24,30 @@ export class BasestampClient {
     this.timeout = options.timeout || 30000;
   }
 
-  async timestamp(hash: string): Promise<CalendarResponse> {
+  async submitSHA256(hash: string): Promise<string> {
     const request: CalendarRequest = { hash };
     
     const response = await this.makeRequest<CalendarResponse>('POST', '/stamp', request);
-    return response;
+    
+    // Extract stamp_id from the response
+    // Note: Assuming the API returns a stamp_id field. If not, this might need adjustment based on actual API response
+    if ('stamp_id' in response) {
+      return (response as any).stamp_id;
+    }
+    
+    // Fallback: use hash as stamp_id if stamp_id is not provided
+    return response.hash;
   }
 
-  async getStamp(stampId: string): Promise<StampData> {
-    const response = await this.makeRequest<StampData>('GET', `/stamp/${stampId}`);
-    return response;
-  }
-
-  async get_merkle_proof(stampId: string, wait: boolean = false, timeout: number = 30): Promise<MerkleProof> {
+  async getStamp(stampId: string, options: StampOptions = {}): Promise<Stamp> {
+    const { wait = false, timeout = 30 } = options;
     let attempts = 0;
     const maxAttempts = wait ? Math.ceil(timeout) : 1;
     const delayMs = 1000; // 1 second between attempts
 
     while (attempts < maxAttempts) {
       try {
-        const stampData = await this.getStamp(stampId);
+        const stampData = await this.makeRequest<StampData>('GET', `/stamp/${stampId}`);
         
         if (!stampData.merkle_proof) {
           if (!wait || attempts === maxAttempts - 1) {
@@ -53,43 +59,45 @@ export class BasestampClient {
           continue;
         }
         
-        // Handle both new nonce-based format and legacy format
-        if (stampData.nonce) {
-          // New nonce-based verification format (nonce is at top level, use hash as original_hash)
-          return new MerkleProof({
-            ...stampData.merkle_proof,
-            nonce: stampData.nonce,
-            original_hash: stampData.hash // Use hash field as original_hash
-          }, verifyMerkleProof, calculateSHA256);
-        } else {
-          // Legacy format - use hash as both nonce and original_hash for backward compatibility
-          console.warn('Server response missing nonce field. Using legacy compatibility mode.');
-          return new MerkleProof({
-            ...stampData.merkle_proof,
-            nonce: '', // Empty nonce for legacy mode
-            original_hash: stampData.hash // Use the hash field as original_hash
-          }, verifyMerkleProof, calculateSHA256);
-        }
+        return new Stamp(stampData, verifyMerkleProof, calculateSHA256);
       } catch (error) {
         if (error instanceof BasestampError) {
           throw error;
         }
-        throw new BasestampError(`Failed to get merkle proof: ${error}`);
+        throw new BasestampError(`Failed to get stamp: ${error}`);
       }
     }
     
-    throw new BasestampError(`Timeout waiting for merkle proof after ${timeout} seconds`);
+    throw new BasestampError(`Timeout waiting for stamp after ${timeout} seconds`);
   }
 
+  /**
+   * @deprecated Use getStamp() which now returns a Stamp object with verify method
+   */
+  async getStampLegacy(stampId: string): Promise<StampData> {
+    const response = await this.makeRequest<StampData>('GET', `/stamp/${stampId}`);
+    return response;
+  }
+
+  /**
+   * @deprecated Use getStamp() and call stamp.getMerkleProof() instead
+   */
+  async get_merkle_proof(stampId: string, wait: boolean = false, timeout: number = 30): Promise<MerkleProof> {
+    const stamp = await this.getStamp(stampId, { wait, timeout });
+    return stamp.getMerkleProof();
+  }
+
+  /**
+   * @deprecated Use getStamp() and call stamp.verify() instead
+   */
   async verifyStamp(stampId: string, hashValue?: string): Promise<boolean> {
     try {
-      // Use the new pattern: get_merkle_proof and then verify
-      const proof = await this.get_merkle_proof(stampId);
+      const stamp = await this.getStamp(stampId);
       
-      // If no hash value provided, use the original_hash from the proof
-      const hashToVerify = hashValue || proof.original_hash;
+      // If no hash value provided, use the original_hash from the stamp
+      const hashToVerify = hashValue || stamp.original_hash;
       
-      return proof.verify(hashToVerify);
+      return stamp.verify(hashToVerify);
     } catch (error) {
       if (error instanceof BasestampError) {
         throw error;

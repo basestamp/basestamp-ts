@@ -1,5 +1,5 @@
 import { BasestampClient } from '../client';
-import { BasestampError, MerkleProof, MerkleProofData } from '../types';
+import { BasestampError, MerkleProof, MerkleProofData, Stamp } from '../types';
 
 // Mock node-fetch
 jest.mock('node-fetch');
@@ -28,13 +28,14 @@ describe('BasestampClient', () => {
     });
   });
 
-  describe('timestamp', () => {
-    test('should successfully create timestamp', async () => {
+  describe('submitSHA256', () => {
+    test('should successfully submit SHA256 hash and return stamp_id', async () => {
       const mockResponse = {
         hash: 'test-hash',
         timestamp: '2023-01-01T00:00:00Z',
         status: 'pending',
-        message: 'Timestamp created'
+        message: 'Timestamp created',
+        stamp_id: 'test-stamp-id'
       };
 
       mockFetch.mockResolvedValueOnce({
@@ -42,7 +43,7 @@ describe('BasestampClient', () => {
         json: async () => mockResponse
       } as any);
 
-      const result = await client.timestamp('test-hash');
+      const result = await client.submitSHA256('test-hash');
       
       expect(mockFetch).toHaveBeenCalledWith(
         'https://test.example.com/stamp',
@@ -52,7 +53,25 @@ describe('BasestampClient', () => {
           body: JSON.stringify({ hash: 'test-hash' })
         })
       );
-      expect(result).toEqual(mockResponse);
+      expect(result).toBe('test-stamp-id');
+    });
+
+    test('should fallback to hash as stamp_id when stamp_id not provided', async () => {
+      const mockResponse = {
+        hash: 'test-hash',
+        timestamp: '2023-01-01T00:00:00Z',
+        status: 'pending',
+        message: 'Timestamp created'
+        // No stamp_id field
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockResponse
+      } as any);
+
+      const result = await client.submitSHA256('test-hash');
+      expect(result).toBe('test-hash');
     });
 
     test('should handle server error', async () => {
@@ -62,16 +81,18 @@ describe('BasestampClient', () => {
         statusText: 'Bad Request'
       } as any);
 
-      await expect(client.timestamp('invalid-hash'))
+      await expect(client.submitSHA256('invalid-hash'))
         .rejects.toThrow(BasestampError);
     });
   });
 
   describe('getStamp', () => {
-    test('should successfully retrieve stamp data', async () => {
+    test('should successfully retrieve stamp and return Stamp object', async () => {
       const mockStampData = {
         stamp_id: 'test-stamp-id',
         hash: 'test-hash',
+        original_hash: 'test-hash',
+        nonce: 'test-nonce',
         timestamp: '2023-01-01T00:00:00Z',
         status: 'confirmed',
         tx_id: 'test-tx-id',
@@ -98,26 +119,26 @@ describe('BasestampClient', () => {
           headers: { 'Content-Type': 'application/json' }
         })
       );
-      expect(result).toEqual(mockStampData);
+      expect(result).toBeInstanceOf(Stamp);
+      expect(result.stamp_id).toBe('test-stamp-id');
+      expect(result.hash).toBe('test-hash');
     });
-  });
 
-  describe('verifyStamp', () => {
-    test('should handle verification process with nonce', async () => {
-      // Test that the nonce-based verification process is called
+    test('should handle wait and timeout options', async () => {
       const mockStampData = {
         stamp_id: 'test-stamp-id',
         hash: 'test-hash',
+        original_hash: 'test-hash',
         nonce: 'test-nonce',
         timestamp: '2023-01-01T00:00:00Z',
         status: 'confirmed',
         merkle_proof: {
-          leaf_hash: '993cad762aeeebe03d453f2c6f5debf388a89f94c1a85b362adff7b83e9468b9',
+          leaf_hash: 'leaf-hash',
           leaf_index: 0,
-          siblings: ['invalid-sibling'], // This will cause merkle verification to fail
+          siblings: ['sibling1'],
           directions: [true],
-          root_hash: 'invalid-root'
-        } as MerkleProofData
+          root_hash: 'root-hash'
+        }
       };
 
       mockFetch.mockResolvedValueOnce({
@@ -125,17 +146,15 @@ describe('BasestampClient', () => {
         json: async () => mockStampData
       } as any);
 
-      // The result should be false because while the leaf hash calculation is correct,
-      // the merkle proof itself is invalid
-      const result = await client.verifyStamp('test-stamp-id');
-      expect(result).toBe(false);
+      const result = await client.getStamp('test-stamp-id', { wait: true, timeout: 10 });
+      expect(result).toBeInstanceOf(Stamp);
     });
 
-    test('should throw error when merkle proof is not available', async () => {
+    test('should throw error when merkle proof is not available and wait is false', async () => {
       const mockStampData = {
         stamp_id: 'test-stamp-id',
         hash: 'test-hash',
-        original_hash: 'test-original-hash',
+        original_hash: 'test-hash',
         nonce: 'test-nonce',
         timestamp: '2023-01-01T00:00:00Z',
         status: 'pending'
@@ -147,24 +166,32 @@ describe('BasestampClient', () => {
         json: async () => mockStampData
       } as any);
 
-      await expect(client.verifyStamp('test-stamp-id'))
+      await expect(client.getStamp('test-stamp-id'))
         .rejects.toThrow('Merkle proof not yet available');
     });
+  });
 
-    test('should use legacy mode when nonce is missing', async () => {
+  describe('Stamp class', () => {
+    test('should verify hash correctly with Stamp.verify() method', async () => {
+      // Use testnonce + testoriginal = SHA256('testnonceoriginal') = 
+      // Let's calculate the correct leaf hash for the test
+      const originalHash = 'testoriginal';
+      const nonce = 'testnonce';
+      
       const mockStampData = {
         stamp_id: 'test-stamp-id',
-        hash: 'test-hash',
+        hash: originalHash,
+        original_hash: originalHash,
+        nonce: nonce,
         timestamp: '2023-01-01T00:00:00Z',
         status: 'confirmed',
         merkle_proof: {
-          leaf_hash: 'test-hash', // In legacy mode, leaf_hash should match the hash
+          leaf_hash: '1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014', // Valid leaf from merkle tests
           leaf_index: 0,
           siblings: ['60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752'],
           directions: [true],
           root_hash: '587b1fe3afa386ce7cf9e99cf6f3b7f6a78a3c1ca6a549bbd467c992e482dc56'
         } as MerkleProofData
-        // Missing nonce - should trigger legacy mode
       };
 
       mockFetch.mockResolvedValueOnce({
@@ -172,15 +199,68 @@ describe('BasestampClient', () => {
         json: async () => mockStampData
       } as any);
 
-      // Should not throw, but use legacy verification
-      const result = await client.verifyStamp('test-stamp-id');
-      expect(typeof result).toBe('boolean');
+      const stamp = await client.getStamp('test-stamp-id');
+      
+      // Test that providing wrong hash throws descriptive error
+      expect(() => stamp.verify('wrong-hash')).toThrow('Hash mismatch: provided hash \'wrong-hash\' does not match stamp\'s original hash \'testoriginal\'');
+      
+      // Since the leaf hash doesn't match nonce+original, it should throw leaf hash error
+      expect(() => stamp.verify(originalHash)).toThrow('Leaf hash verification failed');
     });
 
-    test('should return false for invalid proof', async () => {
+    test('should throw error during verification when merkle proof is not available', async () => {
       const mockStampData = {
         stamp_id: 'test-stamp-id',
         hash: 'test-hash',
+        original_hash: 'test-hash',
+        nonce: 'test-nonce',
+        timestamp: '2023-01-01T00:00:00Z',
+        status: 'pending'
+        // No merkle_proof
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockStampData
+      } as any);
+
+      // This should fail at getStamp level since merkle_proof is required
+      await expect(client.getStamp('test-stamp-id'))
+        .rejects.toThrow('Merkle proof not yet available');
+    });
+
+    test('should use legacy mode when nonce is missing', async () => {
+      const mockStampData = {
+        stamp_id: 'test-stamp-id',
+        hash: '1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014',
+        original_hash: '1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014',
+        nonce: '', // Empty nonce for legacy mode
+        timestamp: '2023-01-01T00:00:00Z',
+        status: 'confirmed',
+        merkle_proof: {
+          leaf_hash: '1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014', // In legacy mode, leaf_hash should match the hash
+          leaf_index: 0,
+          siblings: ['60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752'],
+          directions: [true],
+          root_hash: '587b1fe3afa386ce7cf9e99cf6f3b7f6a78a3c1ca6a549bbd467c992e482dc56' // Valid root from merkle tests
+        } as MerkleProofData
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockStampData
+      } as any);
+
+      const stamp = await client.getStamp('test-stamp-id');
+      const result = stamp.verify('1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014');
+      expect(result).toBe(true);
+    });
+
+    test('should throw descriptive error for invalid proof', async () => {
+      const mockStampData = {
+        stamp_id: 'test-stamp-id',
+        hash: 'test-hash',
+        original_hash: 'test-hash',
         nonce: 'test-nonce',
         timestamp: '2023-01-01T00:00:00Z',
         status: 'confirmed',
@@ -198,16 +278,17 @@ describe('BasestampClient', () => {
         json: async () => mockStampData
       } as any);
 
-      const result = await client.verifyStamp('test-stamp-id');
-      expect(result).toBe(false);
+      const stamp = await client.getStamp('test-stamp-id');
+      expect(() => stamp.verify('test-hash')).toThrow('Leaf hash verification failed');
     });
   });
 
-  describe('get_merkle_proof', () => {
-    test('should successfully get merkle proof without waiting', async () => {
+  describe('get_merkle_proof (deprecated)', () => {
+    test('should successfully get merkle proof through deprecated method', async () => {
       const mockStampData = {
         stamp_id: 'test-stamp-id',
         hash: 'test-hash',
+        original_hash: 'test-hash',
         nonce: 'test-nonce',
         timestamp: '2023-01-01T00:00:00Z',
         status: 'confirmed',
@@ -229,39 +310,22 @@ describe('BasestampClient', () => {
       
       expect(proof).toBeInstanceOf(MerkleProof);
       expect(proof.nonce).toBe('test-nonce');
-      expect(proof.original_hash).toBe('test-hash'); // Now uses hash field as original_hash
+      expect(proof.original_hash).toBe('test-hash');
       expect(proof.leaf_hash).toBe('993cad762aeeebe03d453f2c6f5debf388a89f94c1a85b362adff7b83e9468b9');
     });
+  });
 
-    test('should throw error when merkle proof is not available and wait is false', async () => {
+  describe('verifyStamp (deprecated)', () => {
+    test('should successfully verify stamp through deprecated method', async () => {
       const mockStampData = {
         stamp_id: 'test-stamp-id',
-        hash: 'test-hash',
-        original_hash: 'test-original-hash',
-        nonce: 'test-nonce',
-        timestamp: '2023-01-01T00:00:00Z',
-        status: 'pending'
-        // No merkle_proof
-      };
-
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockStampData
-      } as any);
-
-      await expect(client.get_merkle_proof('test-stamp-id'))
-        .rejects.toThrow('Merkle proof not yet available');
-    });
-
-    test('should verify hash with MerkleProof.verify() method', async () => {
-      const mockStampData = {
-        stamp_id: 'test-stamp-id',
-        hash: 'testoriginal',
-        nonce: 'testnonce',
+        hash: '1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014',
+        original_hash: '1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014',
+        nonce: '', // Empty nonce for legacy mode
         timestamp: '2023-01-01T00:00:00Z',
         status: 'confirmed',
         merkle_proof: {
-          leaf_hash: '9eb1ed28077ad9510f19f6325b793d36d0e0d5e15041d2c759cc93e8b6f3503d',
+          leaf_hash: '1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014',
           leaf_index: 0,
           siblings: ['60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752'],
           directions: [true],
@@ -274,15 +338,33 @@ describe('BasestampClient', () => {
         json: async () => mockStampData
       } as any);
 
-      const proof = await client.get_merkle_proof('test-stamp-id');
-      
-      // Test that verify method exists and returns a boolean
-      const isValid = proof.verify('testoriginal'); // Should match the hash field
-      expect(typeof isValid).toBe('boolean');
-      
-      // Test that providing wrong hash returns false
-      const wrongHashResult = proof.verify('wrong-hash');
-      expect(wrongHashResult).toBe(false);
+      const result = await client.verifyStamp('test-stamp-id');
+      expect(result).toBe(true);
+    });
+
+    test('should throw error for invalid verification', async () => {
+      const mockStampData = {
+        stamp_id: 'test-stamp-id',
+        hash: 'testinvalid',
+        original_hash: 'testinvalid',
+        nonce: 'testnonce',
+        timestamp: '2023-01-01T00:00:00Z',
+        status: 'confirmed',
+        merkle_proof: {
+          leaf_hash: 'invalid-leaf-hash', // This will cause verification to fail
+          leaf_index: 0,
+          siblings: ['sibling1'],
+          directions: [true],
+          root_hash: 'invalid-root-hash'
+        }
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockStampData
+      } as any);
+
+      await expect(client.verifyStamp('test-stamp-id')).rejects.toThrow('Leaf hash verification failed');
     });
   });
 
@@ -349,7 +431,7 @@ describe('BasestampClient', () => {
     test('should handle network error', async () => {
       mockFetch.mockRejectedValueOnce(new Error('Network error'));
 
-      await expect(client.timestamp('test-hash'))
+      await expect(client.submitSHA256('test-hash'))
         .rejects.toThrow(BasestampError);
     });
 
@@ -359,7 +441,7 @@ describe('BasestampClient', () => {
         json: async () => { throw new Error('Invalid JSON'); }
       } as any);
 
-      await expect(client.timestamp('test-hash'))
+      await expect(client.submitSHA256('test-hash'))
         .rejects.toThrow(BasestampError);
     });
   });
