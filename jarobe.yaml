@@ -1,0 +1,9 @@
+version: 1
+name: basestamp-ts
+display_name: Basestamp
+kind: sdk
+remote: basestamp/basestamp-ts
+language: typescript
+package_manager: yarn
+verify: generic
+deploy: none
