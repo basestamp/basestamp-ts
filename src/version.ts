@@ -1,5 +1,5 @@
 // Keep in sync with package.json "version" (checked by a unit test).
-export const SDK_VERSION = '0.1.0';
+export const SDK_VERSION = '0.2.0';
 
 /**
  * User-Agent sent by BasestampClient outside browsers, e.g. "basestamp-ts/0.1.0 (node v20.11.0)".

@@ -6,7 +6,7 @@ module.exports = {
   plugins: ['@typescript-eslint'],
   env: {
     node: true,
-    es6: true,
+    es2020: true,
     jest: true,
   },
   rules: {

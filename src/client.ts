@@ -1,4 +1,3 @@
-import fetch from 'node-fetch';
 import {
   CalendarRequest,
   CalendarResponse,
@@ -9,75 +8,89 @@ import {
   BasestampError,
   ClientOptions,
   MerkleProof,
-  MerkleProofData,
   Stamp,
   StampOptions
 } from './types';
-import { verifyMerkleProof, calculateSHA256 } from './merkle';
+import { verifyMerkleProof, calculateSHA256, normalizeHash } from './merkle';
 import { userAgent, isBrowser } from './version';
 import { DEFAULT_BASE_URL } from './networks';
+import { FetchLike, defaultFetch, describeError } from './http';
 
 export class BasestampClient {
   private baseURL: string;
   private timeout: number;
+  private fetchImpl: FetchLike;
 
   constructor(options: ClientOptions = {}) {
-    this.baseURL = options.baseURL || DEFAULT_BASE_URL;
+    const baseURL = (options.baseURL || DEFAULT_BASE_URL).replace(/\/+$/, '');
+    let parsed: URL;
+    try {
+      parsed = new URL(baseURL);
+    } catch {
+      throw new BasestampError(`Invalid baseURL '${baseURL}'`);
+    }
+    const isLocal = ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname);
+    if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && (isLocal || options.allowInsecure))) {
+      throw new BasestampError(`baseURL must use https (got '${baseURL}'); set allowInsecure to override`);
+    }
+    if (options.timeout !== undefined && (!Number.isFinite(options.timeout) || options.timeout <= 0)) {
+      throw new BasestampError('timeout must be a positive number of milliseconds');
+    }
+    this.baseURL = baseURL;
     this.timeout = options.timeout || 30000;
+    this.fetchImpl = options.fetch || defaultFetch();
   }
 
+  /**
+   * Submits a SHA256 digest (64 hex chars, optional 0x prefix; normalized to lowercase) and returns
+   * the stamp id. Throws BasestampError on invalid input or if the server returns no stamp id.
+   */
   async submitSHA256(hash: string): Promise<string> {
-    const request: CalendarRequest = { hash };
-    
-    const response = await this.makeRequest<CalendarResponse>('POST', '/stamp', request);
-    
-    // Extract stamp_id from the response
-    // Note: Assuming the API returns a stamp_id field. If not, this might need adjustment based on actual API response
-    if ('stamp_id' in response) {
-      return (response as any).stamp_id;
+    const normalized = normalizeHash(hash);
+    if (normalized === null) {
+      throw new BasestampError(`Invalid hash '${hash}': expected a 32-byte hex SHA256 digest`);
     }
-    
-    // Fallback: use hash as stamp_id if stamp_id is not provided
-    return response.hash;
+    const request: CalendarRequest = { hash: normalized };
+
+    const response = await this.makeRequest<CalendarResponse>('POST', '/stamp', request);
+
+    if (!response || typeof response.stamp_id !== 'string' || response.stamp_id === '') {
+      throw new BasestampError('Server response did not include a stamp_id');
+    }
+    return response.stamp_id;
   }
 
   async getStamp(stampId: string, options: StampOptions = {}): Promise<Stamp> {
-    const { wait = false, timeout = 30 } = options;
-    let attempts = 0;
-    const maxAttempts = wait ? Math.ceil(timeout) : 1;
-    const delayMs = 1000; // 1 second between attempts
+    const { wait = false, timeout = 30, pollInterval = 1000 } = options;
+    const path = `/stamp/${encodeURIComponent(validateStampId(stampId))}`;
+    const deadline = Date.now() + timeout * 1000;
 
-    while (attempts < maxAttempts) {
-      try {
-        const stampData = await this.makeRequest<StampData>('GET', `/stamp/${stampId}`);
-        
-        if (!stampData.merkle_proof) {
-          if (!wait || attempts === maxAttempts - 1) {
-            throw new BasestampError('Merkle proof not yet available');
-          }
-          // Wait before retrying
-          await new Promise(resolve => setTimeout(resolve, delayMs));
-          attempts++;
-          continue;
-        }
-        
-        return new Stamp(stampData, verifyMerkleProof, calculateSHA256);
-      } catch (error) {
-        if (error instanceof BasestampError) {
-          throw error;
-        }
-        throw new BasestampError(`Failed to get stamp: ${error}`);
+    for (;;) {
+      const stampData = await this.makeRequest<StampData>('GET', path);
+      if (!stampData || typeof stampData !== 'object') {
+        throw new BasestampError('Malformed stamp response');
       }
+      if (stampData.merkle_proof) {
+        return new Stamp(stampData, verifyMerkleProof, calculateSHA256);
+      }
+      if (stampData.status === 'failed') {
+        throw new BasestampError(`Stamp ${stampId} failed: ${stampData.message || 'no message'}`);
+      }
+      if (!wait) {
+        throw new BasestampError('Merkle proof not yet available');
+      }
+      if (Date.now() + pollInterval > deadline) {
+        throw new BasestampError(`Timeout waiting for stamp after ${timeout} seconds`);
+      }
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
     }
-    
-    throw new BasestampError(`Timeout waiting for stamp after ${timeout} seconds`);
   }
 
   /**
    * @deprecated Use getStamp() which now returns a Stamp object with verify method
    */
   async getStampLegacy(stampId: string): Promise<StampData> {
-    const response = await this.makeRequest<StampData>('GET', `/stamp/${stampId}`);
+    const response = await this.makeRequest<StampData>('GET', `/stamp/${encodeURIComponent(validateStampId(stampId))}`);
     return response;
   }
 
@@ -118,9 +131,16 @@ export class BasestampClient {
     return response;
   }
 
+  /**
+   * @deprecated The server no longer serves /batch/stats; this is derived from /info.
+   */
   async batchStats(): Promise<BatchStats> {
-    const response = await this.makeRequest<BatchStats>('GET', '/batch/stats');
-    return response;
+    const info = await this.info();
+    return {
+      pending_stamps: info.pending_stamps ?? 0,
+      batch_processor: info.status ?? 'unknown',
+      batch_interval: info.batch_interval ?? 'unknown',
+    };
   }
 
   private async makeRequest<T>(
@@ -133,7 +153,7 @@ export class BasestampClient {
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
     try {
-      const init: Parameters<typeof fetch>[1] = {
+      const init: Parameters<FetchLike>[1] = {
         method,
         headers: {
           'Content-Type': 'application/json',
@@ -147,11 +167,20 @@ export class BasestampClient {
         init.body = JSON.stringify(body);
       }
 
-      const response = await fetch(url, init);
+      const response = await this.fetchImpl(url, init);
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        throw new BasestampError(`Server returned error: ${response.status} ${response.statusText}`);
+        let detail = '';
+        try {
+          const errBody = await response.json() as { message?: unknown; error?: unknown };
+          const msg = typeof errBody?.message === 'string' ? errBody.message
+            : typeof errBody?.error === 'string' ? errBody.error : '';
+          detail = msg ? `: ${msg.slice(0, 200)}` : '';
+        } catch {
+          // non-JSON error body
+        }
+        throw new BasestampError(`Server returned error: ${response.status} ${response.statusText}${detail}`);
       }
 
       const data = await response.json() as T;
@@ -167,7 +196,16 @@ export class BasestampClient {
         throw new BasestampError('Request timeout');
       }
       
-      throw new BasestampError(`Request failed: ${error}`);
+      throw new BasestampError(`Request failed: ${describeError(error)}`);
     }
   }
+}
+
+const STAMP_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+function validateStampId(stampId: string): string {
+  if (typeof stampId !== 'string' || !STAMP_ID.test(stampId)) {
+    throw new BasestampError(`Invalid stamp id '${stampId}'`);
+  }
+  return stampId;
 }
