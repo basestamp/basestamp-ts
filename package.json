@@ -1,23 +1,29 @@
 {
   "name": "@basestamp/basestamp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "TypeScript client library for Basestamp API with trustless Merkle proof verification",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
     }
   },
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts",
     "test": "jest",
     "test:watch": "jest --watch",
-    "lint": "eslint src/**/*.ts",
+    "lint": "eslint 'src/**/*.ts'",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "yarn build"
+    "prepublishOnly": "yarn build",
+    "test:e2e": "BASESTAMP_E2E=1 jest src/__tests__/e2e.test.ts --verbose"
   },
   "keywords": [
     "basestamp",
@@ -53,5 +59,9 @@
   },
   "dependencies": {
     "node-fetch": "^2.7.0"
+  },
+  "module": "dist/index.mjs",
+  "engines": {
+    "node": ">=16"
   }
 }
