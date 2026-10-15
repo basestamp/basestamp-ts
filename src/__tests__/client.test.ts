@@ -49,7 +49,10 @@ describe('BasestampClient', () => {
         'https://test.example.com/stamp',
         expect.objectContaining({
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: expect.objectContaining({
+            'Content-Type': 'application/json',
+            'User-Agent': expect.stringMatching(/^basestamp-ts\//),
+          }),
           body: JSON.stringify({ hash: 'test-hash' })
         })
       );
@@ -116,7 +119,7 @@ describe('BasestampClient', () => {
         'https://test.example.com/stamp/test-stamp-id',
         expect.objectContaining({
           method: 'GET',
-          headers: { 'Content-Type': 'application/json' }
+          headers: expect.objectContaining({ 'Content-Type': 'application/json' })
         })
       );
       expect(result).toBeInstanceOf(Stamp);

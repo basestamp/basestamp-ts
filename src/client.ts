@@ -14,6 +14,7 @@ import {
   StampOptions
 } from './types';
 import { verifyMerkleProof, calculateSHA256 } from './merkle';
+import { userAgent, isBrowser } from './version';
 
 export class BasestampClient {
   private baseURL: string;
@@ -135,6 +136,8 @@ export class BasestampClient {
         method,
         headers: {
           'Content-Type': 'application/json',
+          // Browsers forbid overriding User-Agent; only set it in Node and other runtimes.
+          ...(isBrowser() ? {} : { 'User-Agent': userAgent() }),
         },
         signal: controller.signal,
       };
