@@ -1,8 +1,8 @@
 // Keep in sync with package.json "version" (checked by a unit test).
-export const SDK_VERSION = '0.0.1';
+export const SDK_VERSION = '0.1.0';
 
 /**
- * User-Agent sent by BasestampClient outside browsers, e.g. "basestamp-ts/0.0.1 (node v20.11.0)".
+ * User-Agent sent by BasestampClient outside browsers, e.g. "basestamp-ts/0.1.0 (node v20.11.0)".
  * Lets the service count usage per SDK/version. No other telemetry is collected.
  */
 export function userAgent(): string {

@@ -15,13 +15,14 @@ import {
 } from './types';
 import { verifyMerkleProof, calculateSHA256 } from './merkle';
 import { userAgent, isBrowser } from './version';
+import { DEFAULT_BASE_URL } from './networks';
 
 export class BasestampClient {
   private baseURL: string;
   private timeout: number;
 
   constructor(options: ClientOptions = {}) {
-    this.baseURL = options.baseURL || 'https://api.basestamp.io';
+    this.baseURL = options.baseURL || DEFAULT_BASE_URL;
     this.timeout = options.timeout || 30000;
   }
 
