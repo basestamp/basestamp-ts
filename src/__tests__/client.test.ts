@@ -1,3 +1,4 @@
+import { NETWORKS, SEPOLIA_BASE_URL } from '../networks';
 import { BasestampClient } from '../client';
 import { BasestampError, MerkleProof, MerkleProofData, Stamp } from '../types';
 
@@ -17,6 +18,14 @@ describe('BasestampClient', () => {
     test('should use default baseURL when not provided', () => {
       const defaultClient = new BasestampClient();
       expect(defaultClient).toBeDefined();
+      expect((defaultClient as any).baseURL).toBe('https://api-mainnet.basestamp.io');
+      expect(NETWORKS.mainnet.chainId).toBe(8453);
+    });
+
+    test('Sepolia remains selectable', () => {
+      const c = new BasestampClient({ baseURL: SEPOLIA_BASE_URL });
+      expect((c as any).baseURL).toBe('https://api-sepolia.basestamp.io');
+      expect(NETWORKS.sepolia.chainId).toBe(84532);
     });
 
     test('should use provided options', () => {

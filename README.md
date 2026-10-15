@@ -16,9 +16,12 @@ yarn add @basestamp/basestamp
 import { BasestampClient, calculateSHA256 } from '@basestamp/basestamp';
 
 // Initialize the client
-const client = new BasestampClient({
-  baseURL: 'https://api.basestamp.io' // Optional, this is the default
-});
+// Defaults to Base mainnet (https://api-mainnet.basestamp.io, chain 8453)
+const client = new BasestampClient();
+
+// Base Sepolia testnet (chain 84532)
+import { SEPOLIA_BASE_URL } from '@basestamp/basestamp';
+const testnet = new BasestampClient({ baseURL: SEPOLIA_BASE_URL });
 
 // Hash your data
 const data = 'Hello, Basestamp!';
@@ -47,7 +50,7 @@ new BasestampClient(options?: ClientOptions)
 ```
 
 **Options:**
-- `baseURL?: string` - The base URL of the Basestamp API (default: 'https://api.basestamp.io')
+- `baseURL?: string` - The base URL of the Basestamp API (default: `MAINNET_BASE_URL` = 'https://api-mainnet.basestamp.io'; use `SEPOLIA_BASE_URL` for testnet). Chain id / contract / RPC for both networks are exported as `NETWORKS`.
 - `timeout?: number` - Request timeout in milliseconds (default: 30000)
 
 #### Methods
